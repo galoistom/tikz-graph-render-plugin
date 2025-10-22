@@ -1,4 +1,8 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import { App, Editor, MarkdownPostProcessorContext, TFile, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import { exec } from 'child_process';
+import * as path from 'path';
+import * as fs from 'fs/promises';
+import * as os from 'os';
 
 // Remember to rename these classes and interfaces!
 
@@ -14,8 +18,21 @@ export default class MyPlugin extends Plugin {
 	settings: MyPluginSettings;
 
 	async onload() {
+		console.log("loading my plugings");
 		await this.loadSettings();
 
+		this.registerMarkdownCodeBlockProcessor("tikz", (source, el, ctx) => {
+			const raw = source.trim();
+			const folldata = `
+				\\documentclass[tikz, border=5pt]{artical}
+				\\usepackage{amsmath}
+				\\usepackage{amssymb}
+				\\usepackage{tikz}
+				\\begin{document}
+					${raw}
+				\\end{document}
+			`.trim();
+		});
 		// This creates an icon in the left ribbon.
 		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (_evt: MouseEvent) => {
 			// Called when the user clicks the icon.
@@ -25,6 +42,7 @@ export default class MyPlugin extends Plugin {
 		ribbonIconEl.addClass('my-plugin-ribbon-class');
 
 		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
+
 		const statusBarItemEl = this.addStatusBarItem();
 		statusBarItemEl.setText('Status Bar Text');
 
@@ -97,12 +115,12 @@ class SampleModal extends Modal {
 	}
 
 	onOpen() {
-		const {contentEl} = this;
+		const { contentEl } = this;
 		contentEl.setText('Woah!');
 	}
 
 	onClose() {
-		const {contentEl} = this;
+		const { contentEl } = this;
 		contentEl.empty();
 	}
 }
@@ -116,7 +134,7 @@ class SampleSettingTab extends PluginSettingTab {
 	}
 
 	display(): void {
-		const {containerEl} = this;
+		const { containerEl } = this;
 
 		containerEl.empty();
 
@@ -131,4 +149,85 @@ class SampleSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 	}
+}
+
+const TEMP_SUBDIR = 'obsidian-tikz-processor';
+
+/**
+ * 确保临时目录存在
+ * @param dirPath 目录路径
+ */
+async function ensureDirExists(dirPath: string): Promise<void> {
+	try {
+		await fs.mkdir(dirPath, { recursive: true });
+	} catch (e) {
+		// 忽略目录已存在的错误
+		if (e.code !== 'EEXIST') {
+			throw e;
+		}
+	}
+}
+
+/**
+ * 编译 TikZ 代码块并将其转换为 SVG 字符串
+ * @param tikzCode TikZ 代码块的原始内容
+ * @returns 包含 SVG 代码的字符串
+ */
+export async function compileTikzToSvg(fullTexContent: string): Promise<string> {
+	// 1. 设置临时文件路径和目录
+	const tempDir = path.join(os.tmpdir(), TEMP_SUBDIR);
+	await ensureDirExists(tempDir);
+
+	// 使用随机数防止文件名冲突，确保每次运行的隔离性
+	const baseName = `tikz_graph_${Date.now()}_${Math.random().toString(36).substring(2)}`;
+
+	const texPath = path.join(tempDir, `${baseName}.tex`);
+	const pdfPath = path.join(tempDir, `${baseName}.pdf`);
+	const svgPath = path.join(tempDir, `${baseName}.svg`);
+
+	// 2. 构建完整的 LaTeX 文档（包含 TiKZ 代码）
+
+	// 3. 将内容写入 .tex 文件
+	await fs.writeFile(texPath, fullTexContent, 'utf-8');
+
+	// 4. 定义通用的命令行执行函数
+	const runCommand = (cmd: string): Promise<void> => {
+		return new Promise((resolve, reject) => {
+			exec(cmd, { cwd: tempDir }, (error, stdout, stderr) => {
+				if (error) {
+					console.error(`命令行执行错误: ${stderr}`);
+					return reject(new Error(`编译失败：${cmd}。请检查您的 TeX 依赖是否安装正确。`));
+				}
+				resolve();
+			});
+		});
+	};
+
+	// 5. 调用 pdflatex 编译 .tex 文件生成 PDF
+	// -shell-escape 是为了某些特殊宏包，可能不需要，但最好排除
+	// -interaction=batchmode 保持静默，不等待用户输入
+	const latexCommand = `pdflatex -interaction=batchmode "${texPath}"`;
+	try {
+		await runCommand(latexCommand);
+	} catch (e) {
+		// 捕获并重新抛出错误
+		throw new Error(`pdflatex 编译失败: ${e.message}`);
+	}
+
+	// 6. 调用 dvisvgm 将 PDF 转换为 SVG
+	const svgCommand = `dvisvgm --pdf "${pdfPath}" -o "${svgPath}"`;
+	try {
+		await runCommand(svgCommand);
+	} catch (e) {
+		// 捕获并重新抛出错误
+		throw new Error(`dvisvgm 转换失败: ${e.message}`);
+	}
+
+	// 7. 读取并返回 SVG 文件内容
+	const svgContent = await fs.readFile(svgPath, 'utf-8');
+
+	// 8. (可选) 清理临时文件和目录
+	// 这是一个复杂的步骤，这里为了简洁省略了，但生产插件中应清理所有生成文件
+
+	return svgContent;
 }
