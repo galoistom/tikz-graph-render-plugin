@@ -21,68 +21,86 @@ export default class MyPlugin extends Plugin {
 		console.log("loading my plugings");
 		await this.loadSettings();
 
-		this.registerMarkdownCodeBlockProcessor("tikz", (source, el, ctx) => {
+		this.registerMarkdownCodeBlockProcessor("tikz", async (source, el, ctx) => {
 			const raw = source.trim();
 			const folldata = `
-				\\documentclass[tikz, border=5pt]{artical}
-				\\usepackage{amsmath}
-				\\usepackage{amssymb}
-				\\usepackage{tikz}
-				\\begin{document}
-					${raw}
-				\\end{document}
-			`.trim();
+\\documentclass{standalone}
+\\usepackage{amsmath,amsfonts}
+\\usepackage{tikz-cd}
+\\usepackage[utf8]{inputenc}
+\\usepackage[T1]{fontenc}
+\\begin{document}
+\\centering
+${raw}
+\\end{document}
+							`.trim();
+			try {
+				// 使用 await 来等待 Promise 解析，将结果（string）赋值给 svgContent
+				const svgContent = await compileTikzToSvg(folldata);
+				//const svgContent = folldata;
+				// svgContent 现在是一个 string，可以直接赋值给 innerHTML
+				el.innerHTML = svgContent;
+
+			} catch (error) {
+				el.innerHTML = `<div style="color: red;">编译失败: ${error.message}</div>`;
+			}
+			el.addClass('tikz-output');
+			el.style.margin = '10px auto';
+			el.style.display = 'block';
 		});
-		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (_evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-		// Perform additional things with the ribbon
-		ribbonIconEl.addClass('my-plugin-ribbon-class');
+
+		//		This creates an icon in the left ribbon.
+
+		//this.registerMarkdownCodeBlockProcessor("tikz", handlePlug());
+		//		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (_evt: MouseEvent) => {
+		//			// Called when the user clicks the icon.
+		//			new Notice('This is a notice!');
+		//		});
+		//		// Perform additional things with the ribbon
+		//		ribbonIconEl.addClass('my-plugin-ribbon-class');
 
 		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
 
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
+		//		const statusBarItemEl = this.addStatusBarItem();
+		//		statusBarItemEl.setText('Status Bar Text');
 
 		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-sample-modal-simple',
-			name: 'Open sample modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'sample-editor-command',
-			name: 'Sample editor command',
-			editorCallback: (editor: Editor, _view: MarkdownView) => {
-				console.log(editor.getSelection());
-				editor.replaceSelection('Sample Editor Command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-sample-modal-complex',
-			name: 'Open sample modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
-
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-			}
-		});
-
+		//		this.addCommand({
+		//			id: 'open-sample-modal-simple',
+		//			name: 'Open sample modal (simple)',
+		//			callback: () => {
+		//				new SampleModal(this.app).open();
+		//			}
+		//		});
+		//		// This adds an editor command that can perform some operation on the current editor instance
+		//		this.addCommand({
+		//			id: 'sample-editor-command',
+		//			name: 'Sample editor command',
+		//			editorCallback: (editor: Editor, _view: MarkdownView) => {
+		//				console.log(editor.getSelection());
+		//				editor.replaceSelection('Sample Editor Command');
+		//			}
+		//		});
+		//		// This adds a complex command that can check whether the current state of the app allows execution of the command
+		//		this.addCommand({
+		//			id: 'open-sample-modal-complex',
+		//			name: 'Open sample modal (complex)',
+		//			checkCallback: (checking: boolean) => {
+		//				// Conditions to check
+		//				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
+		//				if (markdownView) {
+		//					// If checking is true, we're simply "checking" if the command can be run.
+		//					// If checking is false, then we want to actually perform the operation.
+		//					if (!checking) {
+		//						new SampleModal(this.app).open();
+		//					}
+		//
+		//					// This command will only show up in Command Palette when the check function returns true
+		//					return true;
+		//				}
+		//			}
+		//		});
+		//
 		// This adds a settings tab so the user can configure various aspects of the plugin
 		this.addSettingTab(new SampleSettingTab(this.app, this));
 
@@ -182,7 +200,7 @@ export async function compileTikzToSvg(fullTexContent: string): Promise<string> 
 	const baseName = `tikz_graph_${Date.now()}_${Math.random().toString(36).substring(2)}`;
 
 	const texPath = path.join(tempDir, `${baseName}.tex`);
-	const pdfPath = path.join(tempDir, `${baseName}.pdf`);
+	const pdfPath = path.join(tempDir, `${baseName}.dvi`);
 	const svgPath = path.join(tempDir, `${baseName}.svg`);
 
 	// 2. 构建完整的 LaTeX 文档（包含 TiKZ 代码）
@@ -206,21 +224,21 @@ export async function compileTikzToSvg(fullTexContent: string): Promise<string> 
 	// 5. 调用 pdflatex 编译 .tex 文件生成 PDF
 	// -shell-escape 是为了某些特殊宏包，可能不需要，但最好排除
 	// -interaction=batchmode 保持静默，不等待用户输入
-	const latexCommand = `pdflatex -interaction=batchmode "${texPath}"`;
+	const latexCommand = `latex "${texPath}"`;
 	try {
 		await runCommand(latexCommand);
 	} catch (e) {
 		// 捕获并重新抛出错误
-		throw new Error(`pdflatex 编译失败: ${e.message}`);
+		throw new Error(`latex 编译失败: ${e.message}`);
 	}
 
 	// 6. 调用 dvisvgm 将 PDF 转换为 SVG
-	const svgCommand = `dvisvgm --pdf "${pdfPath}" -o "${svgPath}"`;
+	const svgCommand = `dvisvgm "${pdfPath}" -o "${svgPath}"`;
 	try {
 		await runCommand(svgCommand);
 	} catch (e) {
 		// 捕获并重新抛出错误
-		throw new Error(`dvisvgm 转换失败: ${e.message}`);
+		throw new Error(`dvipng 转换失败: ${e.message}`);
 	}
 
 	// 7. 读取并返回 SVG 文件内容
